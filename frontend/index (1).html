@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GeoTrace – Network Traffic Globe</title>
+<style>
+  html, body { margin:0; height:100%; background:#000; color:#d6e6f5; font-family:system-ui,-apple-system,Segoe UI,sans-serif; overflow:hidden; }
+  #globe { position:absolute; inset:0; }
+  .panel { position:absolute; background:rgba(8,14,26,.84); border:1px solid #1f3350; border-radius:12px; padding:14px 16px; font-size:13px; backdrop-filter:blur(6px); }
+  h1 { font-size:18px; margin:0 0 2px; } .sub { color:#7f95ad; font-size:12px; margin-bottom:10px; }
+  h3 { margin:0 0 8px; font-size:12px; color:#9fb6cf; text-transform:uppercase; letter-spacing:.06em; }
+  #ctl { top:16px; left:16px; width:330px; max-height:calc(100vh - 110px); overflow:auto; }
+  #stats { top:16px; right:16px; width:250px; }
+  #legend { bottom:16px; left:16px; display:flex; gap:14px; flex-wrap:wrap; padding:8px 14px; max-width:60vw; }
+  #alerts { bottom:16px; right:16px; width:330px; max-height:230px; overflow:auto; }
+  button, select, input[type=text] { background:#14233b; color:#d6e6f5; border:1px solid #2a4468; border-radius:8px; padding:6px 10px; font-size:13px; }
+  button { cursor:pointer; } button:hover { background:#1b3150; }
+  button.primary { background:#1d6fe0; border-color:#3b8bff; font-weight:600; }
+  button.danger { background:#a82a35; border-color:#d9505b; }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; }
+  .tab { flex:1; } .tab.on { background:#1d6fe0; border-color:#3b8bff; }
+  input[type=range] { width:100%; margin-top:8px; }
+  .row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .dot { width:10px; height:10px; border-radius:50%; flex:none; }
+  .bar { height:6px; border-radius:3px; background:#4da3ff; }
+  .barrow { margin:5px 0; } .barrow > span { display:flex; justify-content:space-between; }
+  .field { margin:8px 0; } .field label { display:block; font-size:11px; color:#7f95ad; margin-bottom:3px; text-transform:uppercase; letter-spacing:.05em; }
+  .field .line { display:flex; gap:6px; } .field select { flex:1; min-width:0; } .field input[type=text] { width:120px; }
+  .info { font-size:12px; color:#7f95ad; margin-top:3px; min-height:15px; }
+  .seg { display:flex; gap:6px; margin:6px 0; } .seg label { flex:1; text-align:center; border:1px solid #2a4468; border-radius:8px; padding:6px 2px; cursor:pointer; font-size:12px; }
+  .seg input { display:none; } .seg input:checked + span { color:#fff; } .seg label:has(input:checked) { background:#1d6fe0; border-color:#3b8bff; }
+  .seg label.sus:has(input:checked) { background:#a82a35; border-color:#d9505b; } .seg label.lost:has(input:checked) { background:#4b5668; border-color:#7d8aa0; }
+  .counters { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .counter { background:#0d1a2e; border-radius:8px; padding:8px; } .counter b { font-size:20px; display:block; }
+  .alert { color:#5a6b80; margin:6px 0; } .alert.on { color:#ff7b7b; }
+  .ev { margin:5px 0; padding-left:8px; border-left:3px solid #4da3ff; } .ev.ok { border-color:#4dff88; } .ev.bad { border-color:#9aa7b8; color:#b9c4d2; }
+  .ev.sus { border-color:#ff3b3b; color:#ff9a9a; } .ev.warn { border-color:#ff9f43; color:#ffc58a; } .ev small { color:#5f748c; }
+  .pin { position:absolute; transform:translate(-50%,-150%); white-space:nowrap; font-size:11px; padding:2px 7px; border-radius:6px; background:rgba(8,14,26,.9); border:1px solid #2a4468; pointer-events:none; }
+  .pin.lost { border-color:#9aa7b8; color:#cdd6e2; } .pin.ok { border-color:#4dff88; color:#4dff88; } .pin.sus { border-color:#ff3b3b; color:#ff7b7b; font-weight:700; }
+  .pin.ep { color:#ffd24d; border-color:#6b5a1d; }
+  #flash { position:fixed; inset:0; pointer-events:none; box-shadow:inset 0 0 0 0 rgba(255,40,40,0); }
+  #flash.go { animation:flash .9s ease-out; } @keyframes flash { 0%{box-shadow:inset 0 0 160px 50px rgba(255,40,40,.75);} 100%{box-shadow:inset 0 0 160px 50px rgba(255,40,40,0);} }
+  #err { display:none; color:#ff9a9a; font-size:12px; margin:8px 0; }
+</style>
+</head>
+<body>
+<div id="globe"></div>
+<div id="flash"></div>
+
+<div class="panel" id="ctl">
+  <h1>GeoTrace</h1>
+  <div class="sub">Network traffic geolocation on a 3D globe</div>
+  <div class="tabs"><button id="tabReplay" class="tab on">Replay capture</button><button id="tabSim" class="tab">Live simulator</button></div>
+
+  <div id="replayBox">
+    <div class="row">
+      <button id="play">Pause</button>
+      <select id="speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select>
+      <span id="now" style="margin-left:auto;color:#7f95ad"></span>
+    </div>
+    <input type="range" id="seek" min="0" max="1000" value="0">
+    <div id="err">data.json not found. Run <code>python build_data.py --demo</code>, then serve this folder with <code>python -m http.server 8000</code>. The Live simulator works without it.</div>
+  </div>
+
+  <div id="simBox" style="display:none">
+    <div class="field"><label>Source</label>
+      <div class="line"><select id="sCity"></select><input type="text" id="sIp" placeholder="IP address"><button id="sGo" title="Look up this IP">Locate</button></div>
+      <div class="info" id="sInfo"></div></div>
+    <div style="text-align:center"><button id="swap" title="Swap source and destination">⇅ Swap</button></div>
+    <div class="field"><label>Destination</label>
+      <div class="line"><select id="dCity"></select><input type="text" id="dIp" placeholder="IP address"><button id="dGo" title="Look up this IP">Locate</button></div>
+      <div class="info" id="dInfo"></div></div>
+
+    <div class="field"><label>Protocol</label>
+      <select id="proto" style="width:100%"><option>HTTPS</option><option>HTTP</option><option>DNS</option><option>TCP</option><option>UDP</option><option>ICMP</option></select></div>
+
+    <div class="field"><label>Packet type</label>
+      <div class="seg">
+        <label><input type="radio" name="ptype" value="normal" checked><span>Normal</span></label>
+        <label class="sus"><input type="radio" name="ptype" value="sus"><span>Suspicious</span></label>
+        <label class="lost"><input type="radio" name="ptype" value="lost"><span>Lost</span></label>
+      </div></div>
+    <div class="field" id="susBox" style="display:none"><label>Attack pattern</label>
+      <select id="susKind" style="width:100%"><option value="scan">Port scan (25 ports)</option><option value="flood">SYN flood (40 packets)</option><option value="exfil">Data exfiltration (52 MB)</option></select></div>
+    <div class="field">
+      <label style="display:flex;gap:6px;align-items:center;text-transform:none;font-size:12px;color:#d6e6f5"><input type="checkbox" id="retx" checked> Auto-retransmit lost packets after timeout (TCP-style)</label></div>
+
+    <div class="row"><button class="primary" id="send" style="flex:1">Send packet</button><button id="clear">Clear</button></div>
+    <div class="field" style="margin-top:12px"><label>Burst test: <span id="lossVal">20</span>% random loss</label>
+      <input type="range" id="loss" min="0" max="100" value="20">
+      <button id="burst" style="width:100%;margin-top:6px">Send burst of 20 packets</button></div>
+  </div>
+</div>
+
+<div class="panel" id="stats">
+  <div id="replayStats">
+    <h3>Traffic summary</h3><div id="total" style="margin-bottom:10px"></div>
+    <h3>Protocols</h3><div id="protos"></div>
+    <h3 style="margin-top:12px">Top countries</h3><div id="countries"></div>
+  </div>
+  <div id="simStats" style="display:none">
+    <h3>Live counters</h3>
+    <div class="counters">
+      <div class="counter"><b id="cSent">0</b>sent</div><div class="counter"><b id="cOk" style="color:#4dff88">0</b>delivered</div>
+      <div class="counter"><b id="cLost" style="color:#9aa7b8">0</b>lost</div><div class="counter"><b id="cSus" style="color:#ff5c5c">0</b>attacks</div>
+      <div class="counter"><b id="cRetx" style="color:#ff9f43">0</b>retransmits</div><div class="counter"><b id="cRate">0%</b>loss rate</div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="legend"></div>
+<div class="panel" id="alerts">
+  <div id="replayAlerts"><h3>Anomaly alerts</h3><div id="alertList"></div></div>
+  <div id="simLog" style="display:none"><h3>Event log</h3><div id="log"></div></div>
+</div>
+
+<script src="https://unpkg.com/globe.gl"></script>
+<script>
+const $ = id => document.getElementById(id);
+const COLORS = { HTTPS:"#4da3ff", HTTP:"#00e5ff", DNS:"#4dff88", TCP:"#b388ff", UDP:"#ffd24d", ICMP:"#ff9f43", OTHER:"#aaaaaa" };
+const LOOP = 40, WIN = 0.12;
+const HOME = { lat: 19.9975, lng: 73.7898, country: "India (You)" };
+
+let D = null, FLOWS = [], playing = true, speed = 1, phase = 0, lastKey = "", mode = "replay", dirty = false, replayVis = [];
+const manual = [], rings = [], transient = [];
+const EP = { src: null, dst: null };
+const S = { sent:0, ok:0, lost:0, sus:0, retx:0 };
+const timers = new Set();
+const later = (ms, fn) => { const id = setTimeout(() => { timers.delete(id); fn(); }, ms); timers.add(id); return id; };
+
+/* ---------- geometry helpers ---------- */
+const rad = Math.PI / 180;
+function ang(a, b) {
+  const p1 = a.lat*rad, p2 = b.lat*rad, l1 = a.lng*rad, l2 = b.lng*rad;
+  return 2*Math.asin(Math.sqrt(Math.sin((p2-p1)/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin((l2-l1)/2)**2));
+}
+const km = (a, b) => ang(a, b) * 6371;
+function interp(a, b, f) {
+  const d = ang(a, b); if (!d) return { lat:a.lat, lng:a.lng };
+  const p1 = a.lat*rad, p2 = b.lat*rad, l1 = a.lng*rad, l2 = b.lng*rad;
+  const A = Math.sin((1-f)*d)/Math.sin(d), B = Math.sin(f*d)/Math.sin(d);
+  const x = A*Math.cos(p1)*Math.cos(l1) + B*Math.cos(p2)*Math.cos(l2);
+  const y = A*Math.cos(p1)*Math.sin(l1) + B*Math.cos(p2)*Math.sin(l2);
+  const z = A*Math.sin(p1) + B*Math.sin(p2);
+  return { lat: Math.atan2(z, Math.hypot(x, y))/rad, lng: Math.atan2(y, x)/rad };
+}
+const latencyMs = (a, b) => Math.round(km(a, b)/200*1.6 + 4 + Math.random()*6);   // ~fibre speed + routing overhead
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+
+/* ---------- globe ---------- */
+const globe = Globe()($("globe"))
+  .globeImageUrl("//unpkg.com/three-globe/example/img/earth-night.jpg")
+  .bumpImageUrl("//unpkg.com/three-globe/example/img/earth-topology.png")
+  .backgroundImageUrl("//unpkg.com/three-globe/example/img/night-sky.png")
+  .arcColor(d => d.color || (d.alert ? ["#ff2b2b", "#ffb3b3"] : [COLORS[d.proto] || "#aaa", "#ffffff"]))
+  .arcStroke(d => d.stroke || (d.alert ? 0.7 : 0.35))
+  .arcDashLength(0.4).arcDashGap(0.25).arcDashAnimateTime(1500)
+  .arcAltitudeAutoScale(0.45)
+  .arcLabel(d => `<div style="font:12px system-ui;background:#0b1626;padding:6px 8px;border-radius:6px">
+      <b>${esc(d.src)}</b> → <b>${esc(d.dst)}</b><br>${esc(d.sc)} → ${esc(d.dc)}<br>${esc(d.proto)} · ${d.packets} pkts · ${d.bytes} B
+      ${d.alert ? '<br><span style="color:#ff7b7b">⚠ suspicious</span>' : ''}</div>`)
+  .pointAltitude(0.02).pointRadius(0.6).pointColor(() => "#ffd24d")
+  .ringsData(rings).ringColor(d => t => `rgba(${d.rgb},${1 - t})`)
+  .ringMaxRadius(d => d.r || 5).ringPropagationSpeed(3).ringRepeatPeriod(800)
+  .htmlElementsData([]).htmlLat(d => d.lat).htmlLng(d => d.lng)
+  .htmlElement(d => { const el = document.createElement("div"); el.style.cssText = "width:0;height:0;position:relative";
+    el.innerHTML = `<div class="pin ${d.kind}">${esc(d.text)}</div>`; return el; });
+globe.controls().autoRotate = true;
+globe.controls().autoRotateSpeed = 0.45;
+
+/* ---------- legend ---------- */
+$("legend").innerHTML = Object.entries(COLORS).map(([p, c]) => `<div class="row" style="margin:0"><span class="dot" style="background:${c}"></span>${p}</div>`).join("") +
+  `<div class="row" style="margin:0"><span class="dot" style="background:#ff2b2b"></span>Suspicious</div>
+   <div class="row" style="margin:0"><span class="dot" style="background:#9aa7b8"></span>Lost</div>
+   <div class="row" style="margin:0"><span class="dot" style="background:#ffd24d"></span>Endpoint</div>`;
+
+/* ---------- replay mode ---------- */
+fetch("data.json").then(r => r.json()).then(init).catch(() => { $("err").style.display = "block"; setMode("sim"); });
+
+function init(data) {
+  D = data;
+  FLOWS = D.flows.map((f, i) => ({ ...f, id: i, tn: f.t / D.duration }));
+  HOME.lat = D.home.lat; HOME.lng = D.home.lng;
+  PRESETS[0].lat = HOME.lat; PRESETS[0].lng = HOME.lng;
+  globe.pointsData([D.home]);
+  globe.pointOfView({ lat: D.home.lat, lng: D.home.lng, altitude: 2.4 }, 1500);
+
+  $("total").innerHTML = `<b>${D.total_packets.toLocaleString()}</b> packets · <b>${D.flows.length}</b> flows · ${Math.round(D.duration)} s capture`;
+  const maxP = Math.max(1, ...Object.values(D.stats.protocols));
+  $("protos").innerHTML = Object.entries(D.stats.protocols).sort((a, b) => b[1] - a[1]).map(([p, n]) =>
+    `<div class="barrow"><span><span>${p}</span><span>${n.toLocaleString()}</span></span><div class="bar" style="width:${n/maxP*100}%;background:${COLORS[p] || "#aaa"}"></div></div>`).join("");
+  const maxC = Math.max(1, ...D.stats.countries.map(c => c[1]));
+  $("countries").innerHTML = D.stats.countries.map(([c, n]) =>
+    `<div class="barrow"><span><span>${esc(c)}</span><span>${n.toLocaleString()}</span></span><div class="bar" style="width:${n/maxC*100}%"></div></div>`).join("") || "<span style='color:#7f95ad'>none</span>";
+  $("alertList").innerHTML = D.alerts.length
+    ? D.alerts.map((a, i) => `<div class="alert" id="al${i}">⚠ ${esc(a.type)}<br>${esc(a.ip)} · ${esc(a.country)}<br>at t = ${a.t}s</div>`).join("")
+    : "<span style='color:#7f95ad'>No anomalies detected</span>";
+}
+
+let last = performance.now();
+function tick(now) {
+  const dt = (now - last) / 1000; last = now;
+  let changed = dirty; dirty = false;
+  if (mode === "replay" && D) {
+    if (playing) phase = (phase + dt * speed / LOOP) % (1 + WIN);
+    replayVis = FLOWS.filter(f => f.tn <= phase && phase - f.tn < WIN);
+    const key = replayVis.length + ":" + (replayVis[0] ? replayVis[0].id : "") + ":" + (replayVis.length ? replayVis[replayVis.length - 1].id : "");
+    if (key !== lastKey) { lastKey = key; changed = true; }
+    D.alerts.forEach((a, i) => $("al" + i)?.classList.toggle("on", a.t / D.duration <= phase));
+    $("now").textContent = replayVis.length + " live flows";
+    if (playing) $("seek").value = Math.min(1000, phase / (1 + WIN) * 1000);
+  }
+  if (changed) globe.arcsData((mode === "replay" ? replayVis : []).concat(manual));
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+$("play").onclick = e => { playing = !playing; e.target.textContent = playing ? "Pause" : "Play"; };
+$("speed").onchange = e => speed = +e.target.value;
+$("seek").oninput = e => { phase = e.target.value / 1000 * (1 + WIN); };
+
+/* ---------- mode switching ---------- */
+function setMode(m) {
+  mode = m; resetSim();
+  const sim = m === "sim";
+  $("tabReplay").classList.toggle("on", !sim); $("tabSim").classList.toggle("on", sim);
+  $("replayBox").style.display = sim ? "none" : ""; $("simBox").style.display = sim ? "" : "none";
+  $("replayStats").style.display = sim ? "none" : ""; $("simStats").style.display = sim ? "" : "none";
+  $("replayAlerts").style.display = sim ? "none" : ""; $("simLog").style.display = sim ? "" : "none";
+  globe.controls().autoRotate = !sim;
+  globe.pointsData(sim ? [] : (D ? [D.home] : []));
+  if (sim) refreshPins();
+  dirty = true; lastKey = "";
+}
+$("tabReplay").onclick = () => setMode("replay");
+$("tabSim").onclick = () => setMode("sim");
+
+/* ---------- endpoints: presets + live IP lookup ---------- */
+const PRESETS = [
+  { key:"home", name:"Home (You)",        ip:"192.168.1.10",   lat:HOME.lat, lng:HOME.lng },
+  { key:"mv",   name:"Mountain View, US", ip:"8.8.8.8",        lat:37.39, lng:-122.08 },
+  { key:"sf",   name:"San Francisco, US", ip:"208.67.222.222", lat:37.77, lng:-122.42 },
+  { key:"ash",  name:"Ashburn, US",       ip:"198.41.0.4",     lat:39.04, lng:-77.49 },
+  { key:"ams",  name:"Amsterdam, NL",     ip:"193.0.14.129",   lat:52.37, lng:4.90 },
+  { key:"mos",  name:"Moscow, RU",        ip:"77.88.8.8",      lat:55.75, lng:37.62 },
+  { key:"tok",  name:"Tokyo, JP",         ip:"202.12.27.33",   lat:35.68, lng:139.69 },
+  { key:"nj",   name:"Nanjing, CN",       ip:"114.114.114.114",lat:32.06, lng:118.80 },
+];
+const ipOpts = PRESETS.map(p => `<option value="${p.key}">${p.name}</option>`).join("") + `<option value="custom">Custom IP…</option>`;
+$("sCity").innerHTML = ipOpts; $("dCity").innerHTML = ipOpts;
+
+const isIPv4 = s => /^(\d{1,3}\.){3}\d{1,3}$/.test(s) && s.split(".").every(n => +n <= 255);
+const isPrivate = s => /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(s);
+
+function setEndpoint(which, e) {
+  EP[which] = e;
+  const p = which === "src" ? "s" : "d";
+  $(p + "Ip").value = e.ip;
+  $(p + "Info").textContent = `${e.name} · ${e.lat.toFixed(2)}, ${e.lng.toFixed(2)}${e.private ? " · private IP → shown at Home" : ""}`;
+  refreshPins();
+}
+function choose(which) {
+  const p = which === "src" ? "s" : "d", key = $(p + "City").value;
+  if (key === "custom") { $(p + "Ip").focus(); return; }
+  setEndpoint(which, PRESETS.find(x => x.key === key));
+}
+async function locate(which) {
+  const p = which === "src" ? "s" : "d", ip = $(p + "Ip").value.trim();
+  if (!isIPv4(ip)) { $(p + "Info").textContent = "Enter a valid IPv4 address."; return; }
+  if (isPrivate(ip)) { setEndpoint(which, { ...PRESETS[0], ip, private: true }); $(p + "City").value = "custom"; return; }
+  $(p + "Info").textContent = "Looking up…";
+  try {
+    const r = await (await fetch(`http://ip-api.com/json/${ip}?fields=status,message,country,city,lat,lon`)).json();
+    if (r.status !== "success") throw new Error(r.message || "no result");
+    $(p + "City").value = "custom";
+    setEndpoint(which, { name: [r.city, r.country].filter(Boolean).join(", "), ip, lat: r.lat, lng: r.lon });
+  } catch (err) { $(p + "Info").textContent = "Lookup failed (offline or reserved IP). Pick a city from the list instead."; }
+}
+$("sCity").onchange = () => choose("src"); $("dCity").onchange = () => choose("dst");
+$("sGo").onclick = () => locate("src"); $("dGo").onclick = () => locate("dst");
+$("sIp").onkeydown = e => { if (e.key === "Enter") locate("src"); }; $("dIp").onkeydown = e => { if (e.key === "Enter") locate("dst"); };
+$("swap").onclick = () => {
+  const a = EP.src, b = EP.dst; setEndpoint("src", b); setEndpoint("dst", a);
+  const sc = $("sCity").value; $("sCity").value = $("dCity").value; $("dCity").value = sc;
+};
+$("sCity").value = "mos"; $("dCity").value = "home"; choose("src"); choose("dst");
+
+/* ---------- drawing primitives ---------- */
+function refreshPins() {
+  const eps = [];
+  if (mode === "sim") {
+    if (EP.src) eps.push({ lat: EP.src.lat, lng: EP.src.lng, kind: "ep", text: "SRC · " + EP.src.ip });
+    if (EP.dst) eps.push({ lat: EP.dst.lat, lng: EP.dst.lng, kind: "ep", text: "DST · " + EP.dst.ip });
+  }
+  globe.htmlElementsData(eps.concat(transient));
+}
+function ring(pt, rgb, r) { const o = { lat: pt.lat, lng: pt.lng, rgb, r }; rings.push(o); globe.ringsData(rings.slice()); later(2600, () => { rings.splice(rings.indexOf(o), 1); globe.ringsData(rings.slice()); }); }
+function pin(pt, kind, text, ttl) { const o = { lat: pt.lat, lng: pt.lng, kind, text }; transient.push(o); refreshPins(); later(ttl, () => { transient.splice(transient.indexOf(o), 1); refreshPins(); }); }
+function shot(a, b, extra, ttl) {
+  const o = { src: extra.sip || EP.src.ip, dst: extra.dip || EP.dst.ip, sc: a.name || "", dc: b.name || "", packets: 1, bytes: 1200, startLat: a.lat, startLng: a.lng, endLat: b.lat, endLng: b.lng, ...extra };
+  manual.push(o); dirty = true;
+  later(ttl, () => { manual.splice(manual.indexOf(o), 1); dirty = true; });
+}
+function log(cls, html) {
+  const t = new Date().toLocaleTimeString([], { hour12: false });
+  $("log").insertAdjacentHTML("afterbegin", `<div class="ev ${cls}">${html} <small>${t}</small></div>`);
+  while ($("log").children.length > 40) $("log").lastChild.remove();
+}
+function counters() {
+  $("cSent").textContent = S.sent; $("cOk").textContent = S.ok; $("cLost").textContent = S.lost;
+  $("cSus").textContent = S.sus; $("cRetx").textContent = S.retx;
+  $("cRate").textContent = (S.sent ? Math.round(S.lost / S.sent * 100) : 0) + "%";
+}
+function flash() { const f = $("flash"); f.classList.remove("go"); void f.offsetWidth; f.classList.add("go"); }
+function focusPath() { const m = interp(EP.src, EP.dst, 0.5); globe.controls().autoRotate = false; globe.pointOfView({ lat: m.lat, lng: m.lng, altitude: 2.6 }, 900); }
+
+/* ---------- packet behaviours ---------- */
+function sendOne(opts, attempt = 0) {
+  const a = EP.src, b = EP.dst, proto = opts.proto, d = Math.round(km(a, b)).toLocaleString();
+  S.sent++; counters();
+  if (opts.lost) {
+    const f = 0.35 + Math.random() * 0.3, mid = interp(a, b, f);
+    shot(a, mid, { proto, color: ["#9aa7b8", "#4b5668"], dc: "(dropped)" }, 2400);
+    later(1100, () => {
+      ring(mid, "154,167,184", 6); pin(mid, "lost", "✕ packet lost", 4000);
+      S.lost++; counters();
+      log("bad", `✕ <b>Packet lost</b> ${esc(proto)} ${esc(a.ip)} → ${esc(b.ip)} after ~${Math.round(km(a, mid)).toLocaleString()} km`);
+      if (opts.retransmit && attempt < 3) later(1300, () => {
+        S.retx++; log("warn", `⏱ Timeout – no ACK. <b>Retransmit #${attempt + 1}</b>`);
+        sendOne({ ...opts, lost: Math.random() < (opts.lossP || 0), retx: true }, attempt + 1);
+      });
+    });
+  } else {
+    shot(a, b, { proto, color: opts.retx ? ["#ff9f43", "#ffffff"] : null }, 2800);
+    later(1300, () => {
+      ring(b, opts.retx ? "255,159,67" : "77,255,136", 5); pin(b, "ok", opts.retx ? "✓ retransmit delivered" : "✓ delivered", 2500);
+      S.ok++; counters();
+      log("ok", `✓ <b>Delivered</b> ${esc(proto)} ${esc(a.ip)} → ${esc(b.ip)} · ${d} km · ~${latencyMs(a, b)} ms${opts.retx ? " (after retransmit)" : ""}`);
+    });
+  }
+}
+
+function sendSuspicious(kind) {
+  const a = EP.src, b = EP.dst;
+  const detect = (txt, rule) => later(1300, () => {
+    S.sus++; counters(); flash(); ring(b, "255,60,60", 8); pin(b, "sus", "⚠ " + txt, 5000);
+    log("sus", `⚠ <b>${esc(txt)}</b> from ${esc(a.ip)} (${esc(a.name)})<br><small>Rule: ${esc(rule)}</small>`);
+  });
+  if (kind === "scan") {
+    for (let i = 0; i < 25; i++) later(i * 120, () => { S.sent++; counters(); shot(a, b, { proto: "TCP", alert: true, bytes: 60 }, 1800); });
+    later(25 * 120, () => detect("Port scan detected", "≥20 distinct ports in 10 s from one source"));
+  } else if (kind === "flood") {
+    for (let i = 0; i < 40; i++) later(Math.random() * 1500, () => { S.sent++; counters(); shot(a, b, { proto: "TCP", alert: true, bytes: 60, stroke: 0.5 }, 1800); });
+    later(1500, () => detect("SYN flood detected", ">30 SYN packets/s with no completed handshake"));
+  } else {
+    S.sent++; counters(); shot(a, b, { proto: "HTTPS", alert: true, stroke: 1.4, bytes: 52000000 }, 3200);
+    detect("Data exfiltration suspected", "single flow >50 MB to a rarely contacted country");
+  }
+}
+
+$("send").onclick = () => {
+  if (!EP.src || !EP.dst) return;
+  focusPath();
+  const type = document.querySelector("input[name=ptype]:checked").value, proto = $("proto").value;
+  if (type === "normal") sendOne({ proto });
+  else if (type === "lost") sendOne({ proto, lost: true, retransmit: $("retx").checked });
+  else sendSuspicious($("susKind").value);
+};
+$("burst").onclick = () => {
+  if (!EP.src || !EP.dst) return;
+  focusPath();
+  const p = +$("loss").value / 100, proto = $("proto").value, retransmit = $("retx").checked;
+  log("warn", `▶ Burst of 20 ${esc(proto)} packets with ${Math.round(p * 100)}% random loss${retransmit ? " + retransmit" : ""}`);
+  for (let i = 0; i < 20; i++) later(i * 170, () => sendOne({ proto, lost: Math.random() < p, retransmit, lossP: p }));
+};
+document.querySelectorAll("input[name=ptype]").forEach(r => r.onchange = () => {
+  const t = document.querySelector("input[name=ptype]:checked").value;
+  $("susBox").style.display = t === "sus" ? "" : "none";
+});
+$("loss").oninput = e => { $("lossVal").textContent = e.target.value; };
+
+function resetSim() {
+  timers.forEach(clearTimeout); timers.clear();
+  manual.length = 0; rings.length = 0; transient.length = 0; globe.ringsData([]);
+  Object.keys(S).forEach(k => S[k] = 0); counters(); $("log").innerHTML = ""; refreshPins(); dirty = true;
+}
+$("clear").onclick = resetSim;
+</script>
+</body>
+</html>
